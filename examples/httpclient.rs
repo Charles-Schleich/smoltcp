@@ -1,16 +1,21 @@
 mod utils;
 
-use std::str::{self, FromStr};
+use std::{cell::RefCell, rc::Rc, str::{self, FromStr}};
 use std::collections::BTreeMap;
 use std::os::unix::io::AsRawFd;
 use url::Url;
-use log::debug;
+use log::{debug, warn};
 
-use smoltcp::phy::wait as phy_wait;
+use smoltcp::phy::{Device, DeviceCapabilities, RxToken, TapInterface, TxToken, wait as phy_wait};
 use smoltcp::wire::{EthernetAddress, Ipv4Address, Ipv6Address, IpAddress, IpCidr};
 use smoltcp::iface::{NeighborCache, EthernetInterfaceBuilder, Routes};
 use smoltcp::socket::{SocketSet, TcpSocket, TcpSocketBuffer};
 use smoltcp::time::Instant;
+use smoltcp::Result;
+use smoltcp::Error;
+
+use colored::Colorize;
+
 
 fn main() {
     utils::setup_logging("");
@@ -18,15 +23,29 @@ fn main() {
     let (mut opts, mut free) = utils::create_options();
     utils::add_tap_options(&mut opts, &mut free);
     utils::add_middleware_options(&mut opts, &mut free);
-    free.push("ADDRESS");
-    free.push("URL");
 
+    println!("free {:?}",free);
+    // println!("opts {:?}", opts );
     let mut matches = utils::parse_options(&opts, free);
-    let device = utils::parse_tap_options(&mut matches);
-    let fd = device.as_raw_fd();
+    println!("matches {:?}",matches);
+    let device = TapInterface::new("tap0").unwrap();
+    // let device = utils::parse_tap_options(&mut matches);
+
+    // let device = MyInterface::new();
+    println!("device {:?}",device);
+    // let fd = device.as_raw_fd();
+    let fd = 3;
+    println!("fd {:?}",fd);
+    
     let device = utils::parse_middleware_options(&mut matches, device, /*loopback=*/false);
-    let address = IpAddress::from_str(&matches.free[0]).expect("invalid address format");
-    let url = Url::parse(&matches.free[1]).expect("invalid url format");
+
+    // 34.199.75.4 
+    // https://httpbin.org/ip
+    let address = IpAddress::from_str("34.199.75.4").expect("invalid address format");
+    let url = Url::parse("https://httpbin.org/ip").expect("invalid url format");
+
+    // let address = IpAddress::from_str(&matches.free[0]).expect("invalid address format");
+    // let url = Url::parse(&matches.free[1]).expect("invalid url format");
 
 
     let neighbor_cache = NeighborCache::new(BTreeMap::new());
@@ -36,15 +55,22 @@ fn main() {
     let tcp_socket = TcpSocket::new(tcp_rx_buffer, tcp_tx_buffer);
 
     let ethernet_addr = EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]);
-    let ip_addrs = [IpCidr::new(IpAddress::v4(192, 168, 69, 1), 24),
-                    IpCidr::new(IpAddress::v6(0xfdaa, 0, 0, 0, 0, 0, 0, 1), 64),
-                    IpCidr::new(IpAddress::v6(0xfe80, 0, 0, 0, 0, 0, 0, 1), 64)];
+    
+    let ip_addrs = [
+        IpCidr::new(IpAddress::v4(192, 168, 69, 1), 24),
+        // IpCidr::new(IpAddress::v6(0xfdaa, 0, 0, 0, 0, 0, 0, 1), 64),
+        // IpCidr::new(IpAddress::v6(0xfe80, 0, 0, 0, 0, 0, 0, 1), 64)
+        ];
+    
     let default_v4_gw = Ipv4Address::new(192, 168, 69, 100);
-    let default_v6_gw = Ipv6Address::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x100);
+    // let default_v6_gw = Ipv6Address::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x100);
+
     let mut routes_storage = [None; 2];
     let mut routes = Routes::new(&mut routes_storage[..]);
+    
     routes.add_default_ipv4_route(default_v4_gw).unwrap();
-    routes.add_default_ipv6_route(default_v6_gw).unwrap();
+    // routes.add_default_ipv6_route(default_v6_gw).unwrap();
+
     let mut iface = EthernetInterfaceBuilder::new(device)
             .ethernet_addr(ethernet_addr)
             .neighbor_cache(neighbor_cache)
@@ -55,6 +81,7 @@ fn main() {
     let mut sockets = SocketSet::new(vec![]);
     let tcp_handle = sockets.add(tcp_socket);
 
+    #[derive(Debug)]
     enum State { Connect, Request, Response }
     let mut state = State::Connect;
 
@@ -69,22 +96,35 @@ fn main() {
 
         {
             let mut socket = sockets.get::<TcpSocket>(tcp_handle);
+            println!(" {} {}", "TCP State".red(), socket.state());
 
             state = match state {
                 State::Connect if !socket.is_active() => {
-                    debug!("connecting");
                     let local_port = 49152 + rand::random::<u16>() % 16384;
+                    debug!("connecting on Port {}", local_port);
                     socket.connect((address, url.port().unwrap_or(80)), local_port).unwrap();
+                    warn!(" connected !");
                     State::Request
+                    // socket.register_recv_waker(waker)
                 }
                 State::Request if socket.may_send() => {
                     debug!("sending request");
-                    let http_get = "GET ".to_owned() + url.path() + " HTTP/1.1\r\n";
-                    socket.send_slice(http_get.as_ref()).expect("cannot send");
+                    let http_get:String = "GET ".to_owned() + url.path() + " HTTP/1.1\r\n";
                     let http_host = "Host: ".to_owned() + url.host_str().unwrap() + "\r\n";
+
+                    println!("==============================");
+                    print!("{}",http_get);
+                    print!("{}",http_host);
+                    print!("{}","Connection: close\r\n");
+                    println!("{}","\r\n");
+                    println!("==============================");
+
+                    socket.send_slice(http_get.as_ref()).expect("cannot send");
                     socket.send_slice(http_host.as_ref()).expect("cannot send");
                     socket.send_slice(b"Connection: close\r\n").expect("cannot send");
                     socket.send_slice(b"\r\n").expect("cannot send");
+
+
                     State::Response
                 }
                 State::Response if socket.can_recv() => {
@@ -98,7 +138,10 @@ fn main() {
                     debug!("received complete response");
                     break
                 }
-                _ => state
+                state => {
+                    println!(" CURRENT STATE {:?} {:?}",state , socket.may_send());
+                    state
+                }
             }
         }
 

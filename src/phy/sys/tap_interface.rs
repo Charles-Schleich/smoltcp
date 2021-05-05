@@ -52,6 +52,7 @@ impl TapInterfaceDesc {
     }
 
     pub fn recv(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+
         unsafe {
             let len = libc::read(self.lower, buffer.as_mut_ptr() as *mut libc::c_void,
                                  buffer.len());
@@ -60,7 +61,9 @@ impl TapInterfaceDesc {
         }
     }
 
+
     pub fn send(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        // println!("=====\nSENDING BUFFER {:?}\n=====", buffer);
         unsafe {
             let len = libc::write(self.lower, buffer.as_ptr() as *const libc::c_void,
                                   buffer.len());

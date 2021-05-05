@@ -84,6 +84,7 @@ pub fn add_tap_options(_opts: &mut Options, free: &mut Vec<&str>) {
 #[cfg(feature = "phy-tap_interface")]
 pub fn parse_tap_options(matches: &mut Matches) -> TapInterface {
     let interface = matches.free.remove(0);
+    println!("INTERFACE IS  {} ", interface);
     TapInterface::new(&interface).unwrap()
 }
 
@@ -121,6 +122,21 @@ pub fn parse_middleware_options<D>(matches: &mut Matches, device: D, loopback: b
     let shaping_interval = matches.opt_str("shaping-interval").map(|s| u64::from_str(&s).unwrap())
                                   .unwrap_or(0);
 
+    println!("Parse Middleware with options"); 
+    println!("drop_chance {}
+    corrupt_chance {}
+    size_limit {}
+    tx_rate_limit {}
+    rx_rate_limit {}
+    shaping_interval {}", 
+    drop_chance
+    ,corrupt_chance
+    ,size_limit
+    ,tx_rate_limit
+    ,rx_rate_limit
+    ,shaping_interval); 
+
+
     let pcap_writer: Box<dyn io::Write>;
     if let Some(pcap_filename) = matches.opt_str("pcap") {
         pcap_writer = Box::new(File::create(pcap_filename).expect("cannot open file"))
@@ -133,10 +149,12 @@ pub fn parse_middleware_options<D>(matches: &mut Matches, device: D, loopback: b
     let device = PcapWriter::new(device, Rc::new(RefCell::new(pcap_writer)) as Rc<dyn PcapSink>,
                                  if loopback { PcapMode::TxOnly } else { PcapMode::Both },
                                  PcapLinkType::Ethernet);
+    
     let device = EthernetTracer::new(device, |_timestamp, _printer| {
         #[cfg(feature = "log")]
         trace!("{}", _printer);
     });
+
     let mut device = FaultInjector::new(device, seed);
     device.set_drop_chance(drop_chance);
     device.set_corrupt_chance(corrupt_chance);

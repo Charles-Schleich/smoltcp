@@ -8,6 +8,8 @@ use crate::Result;
 use crate::phy::{self, sys, DeviceCapabilities, Device};
 use crate::time::Instant;
 
+use colored::Colorize;
+
 /// A virtual Ethernet interface.
 #[derive(Debug)]
 pub struct TapInterface {
@@ -50,19 +52,27 @@ impl<'a> Device<'a> for TapInterface {
     }
 
     fn receive(&'a mut self) -> Option<(Self::RxToken, Self::TxToken)> {
+        println!("{}", "---Recieve called !".truecolor(198,0,198).bold());
         let mut lower = self.lower.borrow_mut();
         let mut buffer = vec![0; self.mtu];
         match lower.recv(&mut buffer[..]) {
             Ok(size) => {
+                println!("{} {:?}","Data Recieived".blue()  ,buffer);
+                
+                
                 buffer.resize(size, 0);
                 let rx = RxToken { buffer };
                 let tx = TxToken { lower: self.lower.clone() };
                 Some((rx, tx))
             }
             Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
+                println!("{}" , "Nothing recieved, Would block".truecolor(198,0,50).bold());
                 None
             }
-            Err(err) => panic!("{}", err)
+            Err(err) => {
+                println!("{}" , "Nothing recieved, Other Error".truecolor(198,0,50).bold());
+                panic!("{}", err)
+            }
         }
     }
 
@@ -98,6 +108,8 @@ impl phy::TxToken for TxToken {
         let mut lower = self.lower.borrow_mut();
         let mut buffer = vec![0; len];
         let result = f(&mut buffer);
+        println!("{} {:?} ", "---Transmit called !".truecolor(255,69,0).bold(),buffer);
+
         lower.send(&buffer[..]).unwrap();
         result
     }
